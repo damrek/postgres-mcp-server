@@ -120,7 +120,7 @@ Lists all tables in the public schema of a database.
 
 ### postgres_describe_table
 
-Shows table structure including column names, data types, nullability, and default values.
+Shows table structure including columns, constraints (PRIMARY KEY, UNIQUE, CHECK), and indexes.
 
 ### postgres_query_data
 
