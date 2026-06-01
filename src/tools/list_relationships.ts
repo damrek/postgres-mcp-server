@@ -48,32 +48,40 @@ Example:
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        let sql = `
-          SELECT
-            tc.constraint_name,
-            tc.table_name AS source_table,
-            kcu.column_name AS source_column,
-            ccu.table_name AS target_table,
-            ccu.column_name AS target_column
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage kcu
-            ON tc.constraint_name = kcu.constraint_name
-            AND tc.table_schema = kcu.table_schema
-          JOIN information_schema.constraint_column_usage ccu
-            ON tc.constraint_name = ccu.constraint_name
-            AND tc.table_schema = ccu.table_schema
-          WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND tc.table_schema = 'public'
-        `;
+     async (params) => {
+       try {
+         let sql = `
+           SELECT
+             tc.constraint_name,
+             tc.table_name AS source_table,
+             tc.table_schema AS source_schema,
+             kcu.column_name AS source_column,
+             ccu.table_name AS target_table,
+             ccu.column_name AS target_column
+           FROM information_schema.table_constraints tc
+           LEFT JOIN information_schema.key_column_usage kcu
+             ON tc.constraint_name = kcu.constraint_name
+           LEFT JOIN information_schema.constraint_column_usage ccu
+             ON tc.constraint_name = ccu.constraint_name
+           WHERE tc.constraint_type = 'FOREIGN KEY'
+             AND tc.table_schema = 'public'
+         `;
 
-        const queryParams: unknown[] = [];
+         const queryParams: unknown[] = [];
 
-        if (params.table_name) {
-          queryParams.push(params.table_name);
-          sql += ` AND (tc.table_name = $${queryParams.length} OR ccu.table_name = $${queryParams.length})`;
-        }
+         if (params.table_name) {
+           if (params.table_name.includes('.')) {
+             const [schema, table] = params.table_name.split('.');
+             queryParams.push(table);
+             queryParams.push(schema);
+             const tableIdx = queryParams.length - 1;
+             const schemaIdx = queryParams.length;
+             sql += ` AND tc.table_name = $${tableIdx} AND tc.table_schema = $${schemaIdx}`;
+           } else {
+             queryParams.push(params.table_name);
+             sql += ` AND (tc.table_name = $${queryParams.length} OR ccu.table_name = $${queryParams.length})`;
+           }
+         }
 
         sql += ` ORDER BY tc.table_name, tc.constraint_name`;
 
