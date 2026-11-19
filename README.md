@@ -1,7 +1,5 @@
 # postgres-mcp-server
 
-[![CI](https://github.com/damrek/postgres-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/damrek/postgres-mcp-server/actions/workflows/ci.yml)
-
 MCP server for PostgreSQL database queries via Model Context Protocol.
 
 ## Features
