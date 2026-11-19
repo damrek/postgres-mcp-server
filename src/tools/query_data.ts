@@ -2,16 +2,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { CHARACTER_LIMIT } from '../constants.js';
-import { checkReadOnlySql } from '../sql-guard.js';
+import { applyRowLimit, checkReadOnlySql } from '../sql-guard.js';
 
 export function registerQueryData(server: McpServer): void {
   server.registerTool(
     'postgres_query_data',
     {
       title: 'Query PostgreSQL Data',
-      description: `Execute a read-only SELECT query against a PostgreSQL database.
+      description: `Execute a single read-only query against a PostgreSQL database.
 
-IMPORTANT: Only SELECT queries are allowed. Any INSERT, UPDATE, DELETE, DROP, ALTER, or CREATE statements will be rejected.
+IMPORTANT: Only read-only statements are allowed (SELECT, WITH, TABLE, VALUES, SHOW, EXPLAIN). INSERT, UPDATE, DELETE, DDL, multiple statements, SELECT INTO, and EXPLAIN ANALYZE of writes are rejected.
 
 Args:
   - sql (string): The SELECT query to execute. Use $1, $2, etc. for parameters.
@@ -27,7 +27,7 @@ Example:
   - "SELECT name, email FROM customers LIMIT 10"
 
 Error Handling:
-  - Rejects non-SELECT queries
+  - Rejects non-read-only queries and statement stacking
   - Returns error for syntax errors or invalid tables`,
       inputSchema: {
         sql: z
@@ -72,9 +72,7 @@ Error Handling:
       }
 
       try {
-        const limitedSql = params.sql.trim().replace(/;$/, '');
-        const hasLimit = /\bLIMIT\s+\d+/i.test(limitedSql);
-        const finalSql = hasLimit ? limitedSql : `${limitedSql} LIMIT ${params.limit}`;
+        const finalSql = applyRowLimit(params.sql, params.limit);
 
         const result = await query(finalSql, params.params, params.database);
 
