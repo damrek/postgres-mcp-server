@@ -16,7 +16,7 @@ MCP server for PostgreSQL database queries via Model Context Protocol.
 
 ## Prerequisites
 
-- Node.js >= 20
+- Node.js 20.19+, 22.13+, or 24+
 - PostgreSQL instance accessible
 
 ## Installation
