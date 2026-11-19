@@ -9,7 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "tsx --test test/db-config.test.ts test/sql-guard.test.ts test/read-only.integration.test.ts test/query-limit.integration.test.ts",
+    "test": "tsx --test test/db-config.test.ts test/sql-guard.test.ts test/read-only.integration.test.ts test/query-limit.integration.test.ts test/catalog.integration.test.ts",
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "engines": {
