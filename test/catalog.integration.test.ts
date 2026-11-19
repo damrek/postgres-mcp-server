@@ -55,7 +55,14 @@ integrationTest('catalog queries resolve composite foreign keys and constraint c
     const allLookup = relationshipsQuery();
     const relationships = mapRelationships((await query(allLookup.sql, allLookup.params)).rows);
 
-    const composite = relationships.filter((rel) => rel.constraint_name === 'child_parent_fk');
+    const composite = relationships.filter(
+      (rel) =>
+        rel.constraint_name === 'child_parent_fk' &&
+        rel.source_schema === 'public' &&
+        rel.source_table === 'child' &&
+        rel.target_schema === 'public' &&
+        rel.target_table === 'parent'
+    );
     assert.deepEqual(
       composite.map((rel) => [rel.source_column, rel.target_column]),
       [
@@ -84,10 +91,23 @@ integrationTest('catalog queries resolve composite foreign keys and constraint c
     );
 
     const byTable = relationshipsQuery({ tableName: 'child' });
-    assert.equal(mapRelationships((await query(byTable.sql, byTable.params)).rows).length, 2);
+    const byTableRows = mapRelationships((await query(byTable.sql, byTable.params)).rows);
+    assert.deepEqual(
+      byTableRows
+        .filter((rel) => rel.source_schema === 'public' && rel.source_table === 'child')
+        .map((rel) => [rel.source_column, rel.target_column]),
+      [
+        ['x', 'a'],
+        ['y', 'b'],
+      ]
+    );
 
     const byTarget = relationshipsQuery({ tableName: 'parent' });
-    assert.equal(mapRelationships((await query(byTarget.sql, byTarget.params)).rows).length, 2);
+    const byTargetRows = mapRelationships((await query(byTarget.sql, byTarget.params)).rows);
+    assert.equal(
+      byTargetRows.filter((rel) => rel.target_schema === 'public' && rel.target_table === 'parent').length,
+      2
+    );
 
     const byQualified = relationshipsQuery({ tableName: 'public.orders' });
     const qualified = mapRelationships((await query(byQualified.sql, byQualified.params)).rows);
