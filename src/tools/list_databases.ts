@@ -1,5 +1,4 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
 import { query } from '../db.js';
 
 export function registerListDatabases(server: McpServer): void {
