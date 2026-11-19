@@ -8,7 +8,7 @@ MCP server for PostgreSQL database queries via Model Context Protocol.
 - **SQL validation** - Single read-only statements only; data-modifying CTEs, locking clauses, and statement stacking are rejected before execution
 - **6 built-in tools** - List databases, tables, describe structures, query data, count rows, discover relationships
 - **Multiple databases** - Connect to different databases from a single server instance
-- **Relationship discovery** - Automatically find foreign keys between tables
+- **Relationship discovery** - Find foreign keys between tables, including composite keys, with schema-qualified output
 - **Parameterized queries** - Use `$1`, `$2` parameters in `postgres_query_data` to keep values out of the SQL text
 - **Smart truncation** - `postgres_query_data` responses are limited to 25K characters to prevent token overflow
 
@@ -123,17 +123,19 @@ Lists all tables in the public schema of a database.
 
 ### postgres_describe_table
 
-Shows table structure including columns, constraints (PRIMARY KEY, UNIQUE, CHECK), and indexes.
+Shows table structure including columns, constraints (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), and indexes.
 
 ### postgres_query_data
 
 Executes read-only SELECT queries with optional parameters.
 
 **Parameters:**
-- `sql` (required) - SELECT query to execute
+- `sql` (required) - Read-only query to execute (SELECT, WITH, TABLE, VALUES, SHOW, EXPLAIN)
 - `params` (optional) - Array of values for parameterized queries ($1, $2...)
 - `database` (optional) - Database name
 - `limit` (optional) - Max rows to return (default: 100, max: 1000)
+
+Rows are read with a server-side cursor, so an existing `LIMIT` in the SQL is preserved and no SQL text is rewritten. The response includes `truncated: true` when more rows exist.
 
 ### postgres_count_rows
 
@@ -141,7 +143,7 @@ Counts rows in a table with optional WHERE clause filtering.
 
 ### postgres_list_relationships
 
-Discovers foreign key relationships between tables and suggests JOIN queries.
+Discovers foreign key relationships between tables and suggests JOIN queries. Composite foreign keys return one row per column pair, and every row includes source and target schemas.
 
 ## Development
 
