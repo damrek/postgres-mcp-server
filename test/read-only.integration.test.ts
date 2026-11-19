@@ -1,30 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import pg from 'pg';
 import { closeAll, query } from '../src/db.js';
+import { adminClient, configureTestDb, integrationEnabled } from './test-db.js';
 
-const host = process.env.TEST_DB_HOST;
-const enabled = Boolean(host);
-
-if (host) {
-  process.env.DB_HOST = host;
-  process.env.DB_PORT = process.env.TEST_DB_PORT ?? '5432';
-  process.env.DB_USER = process.env.TEST_DB_USER ?? 'postgres';
-  process.env.DB_PASSWORD = process.env.TEST_DB_PASSWORD ?? '';
-  process.env.DB_NAME = process.env.TEST_DB_NAME ?? 'postgres';
-}
-
-const integrationTest = enabled ? test : test.skip;
-
-function adminClient(): pg.Client {
-  return new pg.Client({
-    host: process.env.DB_HOST,
-    port: Number.parseInt(process.env.DB_PORT ?? '5432', 10),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-  });
-}
+configureTestDb();
+const integrationTest = integrationEnabled ? test : test.skip;
 
 integrationTest('read-only boundary rejects writes and keeps data intact', async () => {
   const admin = adminClient();

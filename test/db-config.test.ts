@@ -16,10 +16,9 @@ test('buildPoolConfig enforces read-only transactions on every connection', () =
   assert.match(config.options, /default_transaction_read_only=on/);
 });
 
-test('buildPoolConfig applies statement, query, and connect timeouts', () => {
+test('buildPoolConfig applies statement and connect timeouts', () => {
   const config = buildPoolConfig({});
   assert.equal(config.statement_timeout, 15000);
-  assert.equal(config.query_timeout, 20000);
   assert.equal(config.connectionTimeoutMillis, 10000);
 });
 
@@ -39,7 +38,6 @@ test('buildPoolConfig honors environment overrides', () => {
   assert.equal(config.password, 'secret');
   assert.equal(config.database, 'analytics');
   assert.equal(config.statement_timeout, 2500);
-  assert.equal(config.query_timeout, 7500);
   assert.equal(config.connectionTimeoutMillis, 3000);
 });
 
@@ -62,7 +60,6 @@ test('buildPoolConfig rejects unit-suffixed values and out-of-range ports', () =
   });
   assert.equal(config.port, 5432);
   assert.equal(config.statement_timeout, 15000);
-  assert.equal(config.query_timeout, 20000);
   assert.equal(config.connectionTimeoutMillis, 10000);
 });
 

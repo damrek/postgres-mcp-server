@@ -1,12 +1,10 @@
 const ALLOWED_LEADING_KEYWORDS = new Set(['SELECT', 'WITH', 'TABLE', 'VALUES', 'SHOW', 'EXPLAIN']);
 const EXPLAINABLE_KEYWORDS = new Set(['SELECT', 'WITH', 'VALUES', 'TABLE']);
-const NON_QUERY_KEYWORDS = new Set(['SHOW', 'EXPLAIN']);
 
 const WRITE_KEYWORDS = /\b(INSERT|UPDATE|DELETE|MERGE)\b/i;
 const SELECT_INTO = /\bINTO\b/i;
 const LOCKING_CLAUSE = /\bFOR\s+(UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b/i;
 const IDENTIFIER_PART = /^[A-Za-z_][A-Za-z0-9_$]*$/;
-const LIMIT_CLAUSE = /\bLIMIT\s+\d+/i;
 
 export type ValidationResult = { valid: true } | { valid: false; reason: string };
 
@@ -235,24 +233,6 @@ export function checkReadOnlySql(sql: string): ValidationResult {
   }
 
   return { valid: true };
-}
-
-/**
- * Appends a row limit to statements that return rows. SHOW and EXPLAIN do not
- * accept a trailing LIMIT, and an existing LIMIT in the statement is preserved.
- */
-export function applyRowLimit(sql: string, limit: number): string {
-  const trimmed = sql.trim().replace(/;+$/, '');
-  const stripped = stripLiteralsAndComments(trimmed);
-  const keyword = stripped ? firstWord(stripped) : undefined;
-
-  if (!keyword || NON_QUERY_KEYWORDS.has(keyword)) {
-    return trimmed;
-  }
-  if (stripped && LIMIT_CLAUSE.test(stripped)) {
-    return trimmed;
-  }
-  return `${trimmed} LIMIT ${limit}`;
 }
 
 export function checkTableName(tableName: string): ValidationResult {

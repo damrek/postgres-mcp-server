@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyRowLimit, checkReadOnlySql, checkTableName, checkWhereClause } from '../src/sql-guard.js';
+import { checkReadOnlySql, checkTableName, checkWhereClause } from '../src/sql-guard.js';
 
 test('accepts read-only statements', () => {
   const queries = [
@@ -114,12 +114,4 @@ test('validates where clauses', () => {
   for (const clause of invalidClauses) {
     assert.equal(checkWhereClause(clause).valid, false, clause);
   }
-});
-
-test('applies row limits only to statements that return rows', () => {
-  assert.equal(applyRowLimit('SHOW server_version', 100), 'SHOW server_version');
-  assert.equal(applyRowLimit('EXPLAIN SELECT 1', 100), 'EXPLAIN SELECT 1');
-  assert.equal(applyRowLimit('SELECT * FROM users;', 100), 'SELECT * FROM users LIMIT 100');
-  assert.equal(applyRowLimit('SELECT * FROM users LIMIT 10;', 100), 'SELECT * FROM users LIMIT 10');
-  assert.equal(applyRowLimit("SELECT 'LIMIT 5' AS value", 100), "SELECT 'LIMIT 5' AS value LIMIT 100");
 });

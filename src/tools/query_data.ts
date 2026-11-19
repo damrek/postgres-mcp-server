@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { query } from '../db.js';
+import { queryLimited } from '../db.js';
 import { CHARACTER_LIMIT } from '../constants.js';
-import { applyRowLimit, checkReadOnlySql } from '../sql-guard.js';
+import { checkReadOnlySql } from '../sql-guard.js';
 
 export function registerQueryData(server: McpServer): void {
   server.registerTool(
@@ -72,37 +72,35 @@ Error Handling:
       }
 
       try {
-        const finalSql = applyRowLimit(params.sql, params.limit);
-
-        const result = await query(finalSql, params.params, params.database);
-
-        if (result.rows.length === 0) {
-          return {
-            content: [{ type: 'text', text: 'Query returned 0 rows.' }],
-            structuredContent: { rows: [], count: 0, fields: result.fields.map((f) => f.name) },
-          };
-        }
-
+        const result = await queryLimited(params.sql, params.params, params.limit, params.database);
         const fields = result.fields.map((f) => f.name);
         const rows = result.rows;
 
-        let textOutput: string;
-        let output = { rows, count: rows.length, fields };
-
-        const jsonStr = JSON.stringify(output, null, 2);
-        if (jsonStr.length > CHARACTER_LIMIT) {
-          const halfRows = rows.slice(0, Math.max(1, Math.floor(rows.length / 2)));
-          output = { rows: halfRows, count: rows.length, fields };
-          textOutput = `Query returned ${rows.length} rows. Showing first ${halfRows.length} (response too large).\n\n`;
-          textOutput += formatRowsAsTable(fields, halfRows);
-        } else {
-          textOutput = `Query returned ${rows.length} row(s):\n\n`;
-          textOutput += formatRowsAsTable(fields, rows);
+        if (rows.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'Query returned 0 rows.' }],
+            structuredContent: { rows: [], count: 0, fields, truncated: false },
+          };
         }
+
+        const jsonStr = JSON.stringify({ rows, count: rows.length, fields }, null, 2);
+        const sizeLimited = jsonStr.length > CHARACTER_LIMIT;
+        const outputRows = sizeLimited ? rows.slice(0, Math.max(1, Math.floor(rows.length / 2))) : rows;
+        const truncated = result.truncated || sizeLimited;
+
+        let textOutput = result.truncated
+          ? `Query returned more than the ${params.limit} row limit. Showing the first ${rows.length}.\n\n`
+          : `Query returned ${rows.length} row(s):\n\n`;
+
+        if (sizeLimited) {
+          textOutput = `Query returned ${rows.length} row(s). Showing the first ${outputRows.length} (response too large).\n\n`;
+        }
+
+        textOutput += formatRowsAsTable(fields, outputRows);
 
         return {
           content: [{ type: 'text', text: textOutput }],
-          structuredContent: output,
+          structuredContent: { rows: outputRows, count: rows.length, fields, truncated },
         };
       } catch (error) {
         return {

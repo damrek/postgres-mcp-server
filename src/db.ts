@@ -1,4 +1,5 @@
 import pg from 'pg';
+import Cursor from 'pg-cursor';
 import {
   DEFAULT_CONNECT_TIMEOUT_MS,
   DEFAULT_DB_HOST,
@@ -21,7 +22,6 @@ export interface PoolConfig {
   max: number;
   application_name: string;
   statement_timeout: number;
-  query_timeout: number;
   connectionTimeoutMillis: number;
   options: string;
 }
@@ -41,16 +41,18 @@ function positiveInteger(value: string | undefined, fallback: number, max?: numb
   return parsed;
 }
 
+export function statementTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveInteger(env.DB_STATEMENT_TIMEOUT, DEFAULT_STATEMENT_TIMEOUT_MS);
+}
+
 export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): PoolConfig {
-  const statementTimeout = positiveInteger(env.DB_STATEMENT_TIMEOUT, DEFAULT_STATEMENT_TIMEOUT_MS);
   const config: PoolConfig = {
     host: env.DB_HOST || DEFAULT_DB_HOST,
     port: positiveInteger(env.DB_PORT, DEFAULT_DB_PORT, 65535),
     user: env.DB_USER || DEFAULT_DB_USER,
     max: MAX_POOL_CONNECTIONS,
     application_name: 'postgres-mcp-server',
-    statement_timeout: statementTimeout,
-    query_timeout: statementTimeout + QUERY_TIMEOUT_MARGIN_MS,
+    statement_timeout: statementTimeoutMs(env),
     connectionTimeoutMillis: positiveInteger(env.DB_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_MS),
     options: '-c default_transaction_read_only=on',
   };
@@ -93,6 +95,25 @@ export interface QueryResult {
   fields: pg.FieldDef[];
 }
 
+export interface LimitedQueryResult extends QueryResult {
+  truncated: boolean;
+}
+
+function readCursor(
+  cursor: Cursor,
+  count: number
+): Promise<{ rows: pg.QueryResultRow[]; fields: pg.FieldDef[] }> {
+  return new Promise((resolve, reject) => {
+    cursor.read(count, (error, rows, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ rows, fields: result.fields });
+    });
+  });
+}
+
 export async function query(sql: string, params?: unknown[], database?: string): Promise<QueryResult> {
   const validation = checkReadOnlySql(sql);
   if (!validation.valid) {
@@ -105,7 +126,12 @@ export async function query(sql: string, params?: unknown[], database?: string):
   try {
     await client.query('BEGIN TRANSACTION READ ONLY');
     try {
-      const result = await client.query(sql, params);
+      const timedConfig = {
+        text: sql,
+        values: params,
+        query_timeout: statementTimeoutMs() + QUERY_TIMEOUT_MARGIN_MS,
+      } as pg.QueryConfig & { query_timeout: number };
+      const result = await client.query(timedConfig);
       await client.query('COMMIT');
       return {
         rows: result.rows,
@@ -116,6 +142,52 @@ export async function query(sql: string, params?: unknown[], database?: string):
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     }
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Reads at most `limit + 1` rows with a server-side cursor, so the row limit is
+ * enforced without rewriting the SQL. The extra row only detects truncation.
+ */
+export async function queryLimited(
+  sql: string,
+  params: unknown[] | undefined,
+  limit: number,
+  database?: string
+): Promise<LimitedQueryResult> {
+  const validation = checkReadOnlySql(sql);
+  if (!validation.valid) {
+    throw new Error(`Query rejected: ${validation.reason}`);
+  }
+
+  const pool = getPool(database);
+  const client = await pool.connect();
+  let cursor: Cursor | undefined;
+
+  try {
+    await client.query('BEGIN TRANSACTION READ ONLY');
+    cursor = client.query(new Cursor(sql, params ?? []));
+    const { rows, fields } = await readCursor(cursor, limit + 1);
+    await cursor.close();
+    await client.query('COMMIT');
+
+    const truncated = rows.length > limit;
+    const limitedRows = truncated ? rows.slice(0, limit) : rows;
+
+    return {
+      rows: limitedRows,
+      rowCount: limitedRows.length,
+      fields,
+      truncated,
+    };
+  } catch (error) {
+    if (cursor) {
+      await cursor.close().catch(() => undefined);
+    }
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
   } finally {
     client.release();
   }
