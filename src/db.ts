@@ -8,6 +8,7 @@ import {
   MAX_POOL_CONNECTIONS,
   QUERY_TIMEOUT_MARGIN_MS,
 } from './constants.js';
+import { checkReadOnlySql } from './sql-guard.js';
 
 const { Pool } = pg;
 
@@ -25,16 +26,26 @@ export interface PoolConfig {
   options: string;
 }
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? '', 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+function positiveInteger(value: string | undefined, fallback: number, max?: number): number {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  if (max !== undefined && parsed > max) {
+    return fallback;
+  }
+  return parsed;
 }
 
 export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): PoolConfig {
   const statementTimeout = positiveInteger(env.DB_STATEMENT_TIMEOUT, DEFAULT_STATEMENT_TIMEOUT_MS);
   const config: PoolConfig = {
     host: env.DB_HOST || DEFAULT_DB_HOST,
-    port: positiveInteger(env.DB_PORT, DEFAULT_DB_PORT),
+    port: positiveInteger(env.DB_PORT, DEFAULT_DB_PORT, 65535),
     user: env.DB_USER || DEFAULT_DB_USER,
     max: MAX_POOL_CONNECTIONS,
     application_name: 'postgres-mcp-server',
@@ -83,6 +94,11 @@ export interface QueryResult {
 }
 
 export async function query(sql: string, params?: unknown[], database?: string): Promise<QueryResult> {
+  const validation = checkReadOnlySql(sql);
+  if (!validation.valid) {
+    throw new Error(`Query rejected: ${validation.reason}`);
+  }
+
   const pool = getPool(database);
   const client = await pool.connect();
 

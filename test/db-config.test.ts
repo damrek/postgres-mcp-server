@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPoolConfig } from '../src/db.js';
+import { buildPoolConfig, query } from '../src/db.js';
 
 test('buildPoolConfig applies connection defaults', () => {
   const config = buildPoolConfig({});
@@ -52,4 +52,21 @@ test('buildPoolConfig falls back to defaults for invalid values', () => {
   assert.equal(config.port, 5432);
   assert.equal(config.statement_timeout, 15000);
   assert.equal(config.connectionTimeoutMillis, 10000);
+});
+
+test('buildPoolConfig rejects unit-suffixed values and out-of-range ports', () => {
+  const config = buildPoolConfig({
+    DB_PORT: '99999',
+    DB_STATEMENT_TIMEOUT: '15s',
+    DB_CONNECT_TIMEOUT: '10s',
+  });
+  assert.equal(config.port, 5432);
+  assert.equal(config.statement_timeout, 15000);
+  assert.equal(config.query_timeout, 20000);
+  assert.equal(config.connectionTimeoutMillis, 10000);
+});
+
+test('query() rejects non-read-only SQL before opening a connection', async () => {
+  await assert.rejects(query('DELETE FROM users'), /Query rejected: Only read-only statements/);
+  await assert.rejects(query('SELECT 1; DELETE FROM users'), /Query rejected: Only a single statement/);
 });
