@@ -149,18 +149,21 @@ Discovers foreign key relationships between tables and suggests JOIN queries.
 npm run dev       # Start with hot reload
 npm run build     # Compile TypeScript
 npm run clean     # Remove dist folder
-npm test          # Run unit tests
+npm test          # Run unit tests (the integration probe skips without TEST_DB_*)
 npm run typecheck # Type-check source and tests
 ```
+
+Set `TEST_DB_HOST` (plus optional `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, `TEST_DB_NAME`) to run the read-only integration probe against a disposable PostgreSQL database.
 
 ## Security
 
 Read-only access is enforced in layers, not only by inspecting SQL text:
 
-- **Server-side read-only transactions** - Every query runs inside `BEGIN TRANSACTION READ ONLY`, so PostgreSQL rejects writes even if a statement bypasses client-side validation.
-- **Statement validation** - `postgres_query_data` accepts a single read-only statement (`SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`, `EXPLAIN`) and rejects data-modifying CTEs, `EXPLAIN ANALYZE` writes, locking clauses, and stacked statements before execution.
+- **Server-side read-only transactions** - Every query runs inside `BEGIN TRANSACTION READ ONLY`, so PostgreSQL rejects DML and DDL. One PostgreSQL quirk requires the validator: `EXPLAIN ANALYZE` of a DDL statement can still execute it, so `EXPLAIN` is only accepted when its target is a read-only query.
+- **Statement validation** - `postgres_query_data` accepts a single read-only statement (`SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`, `EXPLAIN`) and rejects data-modifying CTEs, `EXPLAIN ANALYZE` writes, `SELECT INTO`, locking clauses, and stacked statements before execution.
+- **Query boundary check** - The database wrapper validates every statement again before it reaches a connection, so a tool that forgets to validate cannot bypass the statement rules.
 - **Identifier validation** - `postgres_count_rows` validates table names and rejects statement separators in `WHERE` clauses.
-- **Timeouts** - `statement_timeout` (15s by default) and connection timeouts keep a slow query from blocking the server.
+- **Timeouts** - `statement_timeout` (integer milliseconds, 15s by default) and connection timeouts keep a slow query from blocking the server.
 - **Parameterized queries** - Pass values through `$1`, `$2` instead of interpolating them into SQL.
 
 For a hard guarantee, connect with a dedicated role that only has read privileges:
