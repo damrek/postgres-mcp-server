@@ -8,7 +8,8 @@ MCP server for PostgreSQL database queries via Model Context Protocol.
 
 - **Read-only access** - Every query runs inside a read-only PostgreSQL transaction; destructive operations are rejected by the database
 - **SQL validation** - Single read-only statements only; data-modifying CTEs, locking clauses, and statement stacking are rejected before execution
-- **6 built-in tools** - List databases, tables, describe structures, query data, count rows, discover relationships
+- **7 built-in tools** - List databases, tables, describe structures, query data, explain plans, count rows, discover relationships
+- **Structured output** - Every tool publishes an `outputSchema` (MCP structured output) that matches the `structuredContent` it returns, so clients can validate results programmatically
 - **Multiple databases** - Connect to different databases from a single server instance
 - **Relationship discovery** - Find foreign keys between tables, including composite keys, with schema-qualified output
 - **Parameterized queries** - Use `$1`, `$2` parameters in `postgres_query_data` to keep values out of the SQL text
@@ -125,17 +126,28 @@ This opens a web interface where you can interact with all available tools.
 
 ## Available Tools
 
+Every tool publishes an `outputSchema` (MCP structured output) that matches the `structuredContent` it returns, so clients can validate results programmatically.
+
 ### postgres_list_databases
 
 Lists all available databases on the PostgreSQL instance.
 
 ### postgres_list_tables
 
-Lists all tables in the public schema of a database.
+Lists all tables in a database schema.
+
+**Parameters:**
+- `schema` (optional) - Schema to inspect (default: `public`)
+- `database` (optional) - Database name
 
 ### postgres_describe_table
 
 Shows table structure including columns, constraints (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), and indexes.
+
+**Parameters:**
+- `table_name` (required) - Table to describe
+- `schema` (optional) - Schema that contains the table (default: `public`)
+- `database` (optional) - Database name
 
 ### postgres_query_data
 
@@ -149,9 +161,28 @@ Executes read-only SELECT queries with optional parameters.
 
 Rows are read with a server-side cursor, so an existing `LIMIT` in the SQL is preserved and no SQL text is rewritten. The response includes `truncated: true` when rows were omitted, either by the row limit or by the 25K response limit.
 
+### postgres_explain_query
+
+Returns the PostgreSQL execution plan for a read-only statement as JSON.
+
+**Parameters:**
+- `sql` (required) - Read-only statement to explain (SELECT, WITH, TABLE, VALUES)
+- `analyze` (optional) - Execute the statement with `EXPLAIN ANALYZE` and include actual runtimes and buffer usage (default: false)
+- `database` (optional) - Database name
+
+The plan is returned as pretty-printed JSON in the text content and in `structuredContent.plan`. With `analyze: true` the statement still runs inside a read-only transaction and is bounded by `DB_STATEMENT_TIMEOUT`; writes, DDL, `SELECT INTO`, locking clauses, and stacked statements are rejected by the same validator used by `postgres_query_data`.
+
 ### postgres_count_rows
 
 Counts rows in a table with optional WHERE clause filtering.
+
+**Parameters:**
+- `table_name` (required) - Table to count. Use `table` or `schema.table`
+- `where_clause` (optional) - WHERE condition without the WHERE keyword
+- `exact` (optional) - `true` (default) runs `COUNT(*)` for an exact result; `false` returns PostgreSQL's `reltuples` estimate from `pg_class`
+- `database` (optional) - Database name
+
+Estimated counts are cheap on large tables but depend on planner statistics: run `ANALYZE` for accuracy, and expect an error when no estimate is available. `exact: false` does not support `where_clause`.
 
 ### postgres_list_relationships
 
@@ -164,18 +195,18 @@ npm run dev       # Start with hot reload
 npm run build     # Compile TypeScript
 npm run clean     # Remove dist folder
 npm run lint      # Run ESLint
-npm test          # Run unit tests (the integration probe skips without TEST_DB_*)
+npm test          # Run unit and integration tests (integration skips without TEST_DB_*)
 npm run typecheck # Type-check source and tests
 ```
 
-Set `TEST_DB_HOST` (plus optional `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, `TEST_DB_NAME`) to run the read-only integration probe against a disposable PostgreSQL database.
+Set `TEST_DB_HOST` (plus optional `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, `TEST_DB_NAME`) to run the integration probes (read-only boundary, query limits, catalog, schema-scoped metadata, EXPLAIN plans, and row counts) against a disposable PostgreSQL database.
 
 ## Security
 
 Read-only access is enforced in layers, not only by inspecting SQL text:
 
 - **Server-side read-only transactions** - Every query runs inside `BEGIN TRANSACTION READ ONLY`, so PostgreSQL rejects DML and DDL. One PostgreSQL quirk requires the validator: `EXPLAIN ANALYZE` of a DDL statement can still execute it, so `EXPLAIN` is only accepted when its target is a read-only query.
-- **Statement validation** - `postgres_query_data` accepts a single read-only statement (`SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`, `EXPLAIN`) and rejects data-modifying CTEs, `EXPLAIN ANALYZE` writes, `SELECT INTO`, locking clauses, and stacked statements before execution.
+- **Statement validation** - `postgres_query_data` and `postgres_explain_query` accept a single read-only statement (`SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`, `EXPLAIN`) and reject data-modifying CTEs, `EXPLAIN ANALYZE` writes, `SELECT INTO`, locking clauses, and stacked statements before execution.
 - **Query boundary check** - The database wrapper validates every statement again before it reaches a connection, so a tool that forgets to validate cannot bypass the statement rules.
 - **Identifier validation** - `postgres_count_rows` validates table names and rejects statement separators in `WHERE` clauses.
 - **Timeouts** - `statement_timeout` (integer milliseconds, 15s by default) and connection timeouts keep a slow query from blocking the server.
