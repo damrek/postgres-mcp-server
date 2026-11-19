@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
+import { checkTableName, checkWhereClause } from '../sql-guard.js';
 
 export function registerCountRows(server: McpServer): void {
   server.registerTool(
@@ -43,9 +44,26 @@ Error Handling:
       },
     },
     async (params) => {
+      const tableValidation = checkTableName(params.table_name);
+      if (!tableValidation.valid) {
+        return {
+          content: [{ type: 'text', text: `Error: ${tableValidation.reason}` }],
+          isError: true,
+        };
+      }
+
+      if (params.where_clause) {
+        const clauseValidation = checkWhereClause(params.where_clause);
+        if (!clauseValidation.valid) {
+          return {
+            content: [{ type: 'text', text: `Error: ${clauseValidation.reason}` }],
+            isError: true,
+          };
+        }
+      }
+
       try {
         let sql: string;
-        let sqlParams: unknown[] | undefined;
 
         if (params.where_clause) {
           sql = `SELECT COUNT(*) as count FROM ${params.table_name} WHERE ${params.where_clause}`;
@@ -53,7 +71,7 @@ Error Handling:
           sql = `SELECT COUNT(*) as count FROM ${params.table_name}`;
         }
 
-        const result = await query(sql, sqlParams, params.database);
+        const result = await query(sql, undefined, params.database);
         const count = Number(result.rows[0].count);
 
         return {

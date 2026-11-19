@@ -4,12 +4,13 @@ MCP server for PostgreSQL database queries via Model Context Protocol.
 
 ## Features
 
-- **Read-only access** - All queries are SELECT-only; destructive operations are rejected
+- **Read-only access** - Every query runs inside a read-only PostgreSQL transaction; destructive operations are rejected by the database
+- **SQL validation** - Single read-only statements only; data-modifying CTEs, locking clauses, and statement stacking are rejected before execution
 - **6 built-in tools** - List databases, tables, describe structures, query data, count rows, discover relationships
 - **Multiple databases** - Connect to different databases from a single server instance
 - **Relationship discovery** - Automatically find foreign keys between tables
-- **Parameterized queries** - Prevents SQL injection with prepared statement support
-- **Smart truncation** - Responses are limited to 25K characters to prevent token overflow
+- **Parameterized queries** - Use `$1`, `$2` parameters in `postgres_query_data` to keep values out of the SQL text
+- **Smart truncation** - `postgres_query_data` responses are limited to 25K characters to prevent token overflow
 
 ## Prerequisites
 
@@ -36,6 +37,8 @@ npm run build
 | `DB_USER` | `postgres` | Database user |
 | `DB_PASSWORD` | - | Password (optional) |
 | `DB_NAME` | - | Default database |
+| `DB_STATEMENT_TIMEOUT` | `15000` | Per-statement timeout in milliseconds |
+| `DB_CONNECT_TIMEOUT` | `10000` | Connection timeout in milliseconds |
 
 ## Usage
 
@@ -143,17 +146,32 @@ Discovers foreign key relationships between tables and suggests JOIN queries.
 ## Development
 
 ```bash
-npm run dev      # Start with hot reload
-npm run build    # Compile TypeScript
-npm run clean    # Remove dist folder
+npm run dev       # Start with hot reload
+npm run build     # Compile TypeScript
+npm run clean     # Remove dist folder
+npm test          # Run unit tests
+npm run typecheck # Type-check source and tests
 ```
 
 ## Security
 
-- All queries are read-only (SELECT only)
-- INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE are rejected
-- Parameterized queries prevent SQL injection
-- Response truncation prevents token overflow
+Read-only access is enforced in layers, not only by inspecting SQL text:
+
+- **Server-side read-only transactions** - Every query runs inside `BEGIN TRANSACTION READ ONLY`, so PostgreSQL rejects writes even if a statement bypasses client-side validation.
+- **Statement validation** - `postgres_query_data` accepts a single read-only statement (`SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`, `EXPLAIN`) and rejects data-modifying CTEs, `EXPLAIN ANALYZE` writes, locking clauses, and stacked statements before execution.
+- **Identifier validation** - `postgres_count_rows` validates table names and rejects statement separators in `WHERE` clauses.
+- **Timeouts** - `statement_timeout` (15s by default) and connection timeouts keep a slow query from blocking the server.
+- **Parameterized queries** - Pass values through `$1`, `$2` instead of interpolating them into SQL.
+
+For a hard guarantee, connect with a dedicated role that only has read privileges:
+
+```sql
+CREATE ROLE mcp_reader LOGIN PASSWORD 'change_me';
+GRANT CONNECT ON DATABASE your_database TO mcp_reader;
+GRANT USAGE ON SCHEMA public TO mcp_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader;
+```
 
 ## License
 

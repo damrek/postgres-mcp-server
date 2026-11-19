@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { CHARACTER_LIMIT } from '../constants.js';
+import { checkReadOnlySql } from '../sql-guard.js';
 
 export function registerQueryData(server: McpServer): void {
   server.registerTool(
@@ -57,20 +58,17 @@ Error Handling:
       },
     },
     async (params) => {
-      const trimmedSql = params.sql.trim().toUpperCase();
-      const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'TRUNCATE', 'EXECUTE'];
-      for (const keyword of forbidden) {
-        if (trimmedSql.startsWith(keyword + ' ') || trimmedSql.startsWith(keyword + '\n')) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: Only SELECT queries are allowed. Detected '${keyword}' statement.`,
-              },
-            ],
-            isError: true,
-          };
-        }
+      const validation = checkReadOnlySql(params.sql);
+      if (!validation.valid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${validation.reason}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       try {
