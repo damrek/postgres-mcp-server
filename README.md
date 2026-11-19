@@ -1,5 +1,7 @@
 # postgres-mcp-server
 
+[![CI](https://github.com/damrek/postgres-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/damrek/postgres-mcp-server/actions/workflows/ci.yml)
+
 MCP server for PostgreSQL database queries via Model Context Protocol.
 
 ## Features
@@ -14,15 +16,15 @@ MCP server for PostgreSQL database queries via Model Context Protocol.
 
 ## Prerequisites
 
-- Node.js >= 18
+- Node.js >= 20
 - PostgreSQL instance accessible
 
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/damrek/postgres-mcp-server.git
 cd postgres-mcp-server
-npm install
+npm ci
 npm run build
 ```
 
@@ -39,6 +41,16 @@ npm run build
 | `DB_NAME` | - | Default database |
 | `DB_STATEMENT_TIMEOUT` | `15000` | Per-statement timeout in milliseconds |
 | `DB_CONNECT_TIMEOUT` | `10000` | Connection timeout in milliseconds |
+
+### Cloud SQL Proxy
+
+The server only opens TCP connections to `DB_HOST`/`DB_PORT`. When the database is a Cloud SQL instance, start the proxy locally and point the server at it:
+
+```bash
+cloud-sql-proxy --port 5432 project:region:instance
+```
+
+Then use `DB_HOST=127.0.0.1` and `DB_PORT=5432`. The proxy owns authentication and TLS; the MCP server does not manage the proxy process.
 
 ## Usage
 
@@ -151,6 +163,7 @@ Discovers foreign key relationships between tables and suggests JOIN queries. Co
 npm run dev       # Start with hot reload
 npm run build     # Compile TypeScript
 npm run clean     # Remove dist folder
+npm run lint      # Run ESLint
 npm test          # Run unit tests (the integration probe skips without TEST_DB_*)
 npm run typecheck # Type-check source and tests
 ```
@@ -180,4 +193,4 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader;
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
