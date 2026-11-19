@@ -8,6 +8,7 @@ import { registerDescribeTable } from './tools/describe_table.js';
 import { registerQueryData } from './tools/query_data.js';
 import { registerCountRows } from './tools/count_rows.js';
 import { registerListRelationships } from './tools/list_relationships.js';
+import { registerExplainQuery } from './tools/explain_query.js';
 import { closeAll } from './db.js';
 
 const server = new McpServer({
@@ -21,6 +22,7 @@ registerDescribeTable(server);
 registerQueryData(server);
 registerCountRows(server);
 registerListRelationships(server);
+registerExplainQuery(server);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

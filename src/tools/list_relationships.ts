@@ -35,6 +35,21 @@ Example:
           .optional()
           .describe('Database name (optional, uses DB_NAME env if omitted)'),
       },
+      outputSchema: {
+        relationships: z.array(
+          z.object({
+            constraint_name: z.string(),
+            source_schema: z.string(),
+            source_table: z.string(),
+            source_column: z.string(),
+            target_schema: z.string(),
+            target_table: z.string(),
+            target_column: z.string(),
+          })
+        ),
+        count: z.number(),
+        database: z.string().optional(),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 import { query } from '../db.js';
 
 export function registerListDatabases(server: McpServer): void {
@@ -18,6 +19,9 @@ Example:
 Error Handling:
   - Returns an error message if the connection fails`,
       inputSchema: {},
+      outputSchema: {
+        databases: z.array(z.string()),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

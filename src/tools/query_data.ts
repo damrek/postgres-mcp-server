@@ -50,6 +50,12 @@ Error Handling:
           .default(100)
           .describe('Maximum rows to return (default: 100, max: 1000)'),
       },
+      outputSchema: {
+        rows: z.array(z.record(z.string(), z.unknown())),
+        count: z.number(),
+        fields: z.array(z.string()),
+        truncated: z.boolean(),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

@@ -19,6 +19,7 @@ export function registerDescribeTable(server: McpServer): void {
 
 Args:
   - table_name (string): Name of the table to describe.
+  - schema (string, optional): Schema that contains the table (default: public).
   - database (string, optional): Database name. If omitted, uses DB_NAME env var.
 
 Returns:
@@ -30,15 +31,47 @@ Example:
   - Use when: "What columns does the users table have?"
   - Use when: "Show me the structure of the orders table"
   - Use when: "What indexes are on the users table?"
+  - Use when: "Describe analytics.events" -> table_name="events", schema="analytics"
 
 Error Handling:
-  - Returns an error if the table doesn't exist`,
+  - Returns text noting the table may not exist when no columns are found`,
       inputSchema: {
         table_name: z.string().describe('Name of the table to describe'),
+        schema: z
+          .string()
+          .default(PUBLIC_SCHEMA)
+          .describe('Schema that contains the table (default: public)'),
         database: z
           .string()
           .optional()
           .describe('Database name (optional, uses DB_NAME env if omitted)'),
+      },
+      outputSchema: {
+        table: z.string(),
+        schema: z.string(),
+        columns: z.array(
+          z.object({
+            name: z.string(),
+            type: z.string(),
+            nullable: z.boolean(),
+            default: z.string().nullable(),
+          })
+        ),
+        constraints: z.array(
+          z.object({
+            type: z.string(),
+            name: z.string(),
+            columns: z.array(z.string()).optional(),
+            check_clause: z.string().optional(),
+            definition: z.string().optional(),
+          })
+        ),
+        indexes: z.array(
+          z.object({
+            name: z.string(),
+            definition: z.string(),
+          })
+        ),
       },
       annotations: {
         readOnlyHint: true,
@@ -49,9 +82,9 @@ Error Handling:
     },
     async (params) => {
       try {
-        const columnLookup = columnsQuery(params.table_name, PUBLIC_SCHEMA);
-        const constraintLookup = constraintsQuery(params.table_name, PUBLIC_SCHEMA);
-        const indexLookup = indexesQuery(params.table_name, PUBLIC_SCHEMA);
+        const columnLookup = columnsQuery(params.table_name, params.schema);
+        const constraintLookup = constraintsQuery(params.table_name, params.schema);
+        const indexLookup = indexesQuery(params.table_name, params.schema);
 
         const [columnsResult, constraintsResult, indexesResult] = await Promise.all([
           query(columnLookup.sql, columnLookup.params, params.database),
@@ -64,9 +97,16 @@ Error Handling:
             content: [
               {
                 type: 'text',
-                text: `No columns found for table '${params.table_name}'. Table may not exist or is not in the public schema.`,
+                text: `No columns found for table '${params.schema}.${params.table_name}'. Table may not exist.`,
               },
             ],
+            structuredContent: {
+              table: params.table_name,
+              schema: params.schema,
+              columns: [],
+              constraints: [],
+              indexes: [],
+            },
           };
         }
 
@@ -109,7 +149,13 @@ Error Handling:
 
         return {
           content: [{ type: 'text', text: lines.join('\n') }],
-          structuredContent: { table: params.table_name, columns, constraints, indexes },
+          structuredContent: {
+            table: params.table_name,
+            schema: params.schema,
+            columns,
+            constraints,
+            indexes,
+          },
         };
       } catch (error) {
         return {
