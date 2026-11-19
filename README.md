@@ -135,7 +135,7 @@ Executes read-only SELECT queries with optional parameters.
 - `database` (optional) - Database name
 - `limit` (optional) - Max rows to return (default: 100, max: 1000)
 
-Rows are read with a server-side cursor, so an existing `LIMIT` in the SQL is preserved and no SQL text is rewritten. The response includes `truncated: true` when more rows exist.
+Rows are read with a server-side cursor, so an existing `LIMIT` in the SQL is preserved and no SQL text is rewritten. The response includes `truncated: true` when rows were omitted, either by the row limit or by the 25K response limit.
 
 ### postgres_count_rows
 
