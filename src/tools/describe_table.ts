@@ -8,6 +8,7 @@ import {
   mapConstraints,
   mapIndexes,
   PUBLIC_SCHEMA,
+  resolveSchemaName,
 } from '../catalog.js';
 
 export function registerDescribeTable(server: McpServer): void {
@@ -19,7 +20,7 @@ export function registerDescribeTable(server: McpServer): void {
 
 Args:
   - table_name (string): Name of the table to describe.
-  - schema (string, optional): Schema that contains the table (default: public).
+  - schema (string, optional): Schema that contains the table (default: public). Unquoted names fold to lowercase; double-quote mixed-case names.
   - database (string, optional): Database name. If omitted, uses DB_NAME env var.
 
 Returns:
@@ -39,8 +40,11 @@ Error Handling:
         table_name: z.string().describe('Name of the table to describe'),
         schema: z
           .string()
+          .min(1)
           .default(PUBLIC_SCHEMA)
-          .describe('Schema that contains the table (default: public)'),
+          .describe(
+            'Schema that contains the table (default: public; unquoted names fold to lowercase, double-quote mixed-case names)'
+          ),
         database: z
           .string()
           .optional()
@@ -82,9 +86,17 @@ Error Handling:
     },
     async (params) => {
       try {
-        const columnLookup = columnsQuery(params.table_name, params.schema);
-        const constraintLookup = constraintsQuery(params.table_name, params.schema);
-        const indexLookup = indexesQuery(params.table_name, params.schema);
+        const schema = await resolveSchemaName(params.schema, params.database);
+        if (!schema) {
+          return {
+            content: [{ type: 'text', text: `Error: Schema '${params.schema}' does not exist.` }],
+            isError: true,
+          };
+        }
+
+        const columnLookup = columnsQuery(params.table_name, schema);
+        const constraintLookup = constraintsQuery(params.table_name, schema);
+        const indexLookup = indexesQuery(params.table_name, schema);
 
         const [columnsResult, constraintsResult, indexesResult] = await Promise.all([
           query(columnLookup.sql, columnLookup.params, params.database),
@@ -97,12 +109,12 @@ Error Handling:
             content: [
               {
                 type: 'text',
-                text: `No columns found for table '${params.schema}.${params.table_name}'. Table may not exist.`,
+                text: `No columns found for table '${schema}.${params.table_name}'. Table may not exist.`,
               },
             ],
             structuredContent: {
               table: params.table_name,
-              schema: params.schema,
+              schema,
               columns: [],
               constraints: [],
               indexes: [],
@@ -151,7 +163,7 @@ Error Handling:
           content: [{ type: 'text', text: lines.join('\n') }],
           structuredContent: {
             table: params.table_name,
-            schema: params.schema,
+            schema,
             columns,
             constraints,
             indexes,

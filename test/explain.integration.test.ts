@@ -141,10 +141,12 @@ integrationTest('schema-scoped list_tables and describe_table resolve the reques
     await admin.query('DROP SCHEMA IF EXISTS phase4_catalog_schema CASCADE');
     await admin.query('DROP TABLE IF EXISTS phase4_public_probe CASCADE');
     await admin.query('CREATE SCHEMA phase4_catalog_schema');
+    await admin.query('CREATE SCHEMA "Phase4Mixed"');
     await admin.query('CREATE TABLE phase4_public_probe (id int)');
     await admin.query(
       "CREATE TABLE phase4_catalog_schema.phase4_scoped_probe (id int PRIMARY KEY, label text NOT NULL DEFAULT 'scoped')"
     );
+    await admin.query('CREATE TABLE "Phase4Mixed".phase4_mixed_probe (id int)');
 
     const scoped = await tools.client.callTool({
       name: 'postgres_list_tables',
@@ -169,6 +171,35 @@ integrationTest('schema-scoped list_tables and describe_table resolve the reques
     assert.equal(defaultContent.schema, 'public');
     assert.ok(defaultContent.tables.includes('phase4_public_probe'));
     assert.ok(!defaultContent.tables.includes('phase4_scoped_probe'));
+
+    const uppercaseList = await tools.client.callTool({
+      name: 'postgres_list_tables',
+      arguments: { schema: 'PHASE4_CATALOG_SCHEMA' },
+    });
+    const uppercaseListContent = uppercaseList.structuredContent as
+      | { tables: string[]; schema: string }
+      | undefined;
+    assert.notEqual(uppercaseList.isError, true);
+    assert.equal(uppercaseListContent?.schema, 'phase4_catalog_schema');
+    assert.deepEqual(uppercaseListContent?.tables, ['phase4_scoped_probe']);
+
+    const mixedList = await tools.client.callTool({
+      name: 'postgres_list_tables',
+      arguments: { schema: '"Phase4Mixed"' },
+    });
+    const mixedListContent = mixedList.structuredContent as
+      | { tables: string[]; schema: string }
+      | undefined;
+    assert.notEqual(mixedList.isError, true);
+    assert.equal(mixedListContent?.schema, 'Phase4Mixed');
+    assert.deepEqual(mixedListContent?.tables, ['phase4_mixed_probe']);
+
+    const missingSchemaList = await tools.client.callTool({
+      name: 'postgres_list_tables',
+      arguments: { schema: 'phase4_missing_schema' },
+    });
+    assert.equal(missingSchemaList.isError, true);
+    assert.equal(textOf(missingSchemaList), "Error: Schema 'phase4_missing_schema' does not exist.");
 
     const described = await tools.client.callTool({
       name: 'postgres_describe_table',
@@ -207,8 +238,40 @@ integrationTest('schema-scoped list_tables and describe_table resolve the reques
     );
     const missingContent = missing.structuredContent as { columns: unknown[] } | undefined;
     assert.equal(missingContent?.columns.length, 0);
+
+    const uppercaseDescribe = await tools.client.callTool({
+      name: 'postgres_describe_table',
+      arguments: { table_name: 'phase4_scoped_probe', schema: 'PHASE4_CATALOG_SCHEMA' },
+    });
+    assert.notEqual(uppercaseDescribe.isError, true);
+    assert.equal(
+      (uppercaseDescribe.structuredContent as { schema: string } | undefined)?.schema,
+      'phase4_catalog_schema'
+    );
+    assert.match(textOf(uppercaseDescribe), /Table: phase4_scoped_probe/);
+
+    const mixedDescribe = await tools.client.callTool({
+      name: 'postgres_describe_table',
+      arguments: { table_name: 'phase4_mixed_probe', schema: '"Phase4Mixed"' },
+    });
+    assert.notEqual(mixedDescribe.isError, true);
+    assert.equal(
+      (mixedDescribe.structuredContent as { schema: string } | undefined)?.schema,
+      'Phase4Mixed'
+    );
+
+    const missingSchemaDescribe = await tools.client.callTool({
+      name: 'postgres_describe_table',
+      arguments: { table_name: 'phase4_scoped_probe', schema: 'phase4_missing_schema' },
+    });
+    assert.equal(missingSchemaDescribe.isError, true);
+    assert.equal(
+      textOf(missingSchemaDescribe),
+      "Error: Schema 'phase4_missing_schema' does not exist."
+    );
   } finally {
     await admin.query('DROP SCHEMA IF EXISTS phase4_catalog_schema CASCADE');
+    await admin.query('DROP SCHEMA IF EXISTS "Phase4Mixed" CASCADE');
     await admin.query('DROP TABLE IF EXISTS phase4_public_probe CASCADE');
     await admin.end();
     await tools.close();

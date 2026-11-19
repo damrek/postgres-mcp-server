@@ -135,7 +135,7 @@ Lists all available databases on the PostgreSQL instance.
 Lists all tables in a database schema.
 
 **Parameters:**
-- `schema` (optional) - Schema to inspect (default: `public`)
+- `schema` (optional) - Schema to inspect (default: `public`; unquoted names fold to lowercase, double-quote mixed-case schemas)
 - `database` (optional) - Database name
 
 ### postgres_describe_table
@@ -144,7 +144,7 @@ Shows table structure including columns, constraints (PRIMARY KEY, UNIQUE, CHECK
 
 **Parameters:**
 - `table_name` (required) - Table to describe
-- `schema` (optional) - Schema that contains the table (default: `public`)
+- `schema` (optional) - Schema that contains the table (default: `public`; unquoted names fold to lowercase, double-quote mixed-case schemas)
 - `database` (optional) - Database name
 
 ### postgres_query_data

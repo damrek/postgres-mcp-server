@@ -1,10 +1,25 @@
 import type { QueryResultRow } from 'pg';
+import { query } from './db.js';
 
 export const PUBLIC_SCHEMA = 'public';
 
 export interface CatalogQuery {
   sql: string;
   params: unknown[];
+}
+
+/**
+ * Resolves a schema name the same way PostgreSQL parses identifiers: unquoted
+ * names fold to lowercase, while double-quoted names keep their case.
+ * Returns null when the schema does not exist.
+ */
+export async function resolveSchemaName(schema: string, database?: string): Promise<string | null> {
+  const result = await query(
+    'SELECT nspname FROM pg_namespace WHERE oid = to_regnamespace($1)',
+    [schema],
+    database
+  );
+  return (result.rows[0]?.nspname as string | undefined) ?? null;
 }
 
 export interface Relationship {

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { PUBLIC_SCHEMA } from '../catalog.js';
+import { PUBLIC_SCHEMA, resolveSchemaName } from '../catalog.js';
 
 export function registerListTables(server: McpServer): void {
   server.registerTool(
@@ -11,7 +11,7 @@ export function registerListTables(server: McpServer): void {
       description: `List all tables in a database schema (public by default).
 
 Args:
-  - schema (string, optional): Schema to inspect (default: public).
+  - schema (string, optional): Schema to inspect (default: public). Unquoted names fold to lowercase; double-quote mixed-case names.
   - database (string, optional): Database name. If omitted, uses DB_NAME env var.
 
 Returns:
@@ -27,8 +27,11 @@ Error Handling:
       inputSchema: {
         schema: z
           .string()
+          .min(1)
           .default(PUBLIC_SCHEMA)
-          .describe('Schema to list tables from (default: public)'),
+          .describe(
+            'Schema to list tables from (default: public; unquoted names fold to lowercase, double-quote mixed-case names)'
+          ),
         database: z
           .string()
           .optional()
@@ -48,9 +51,17 @@ Error Handling:
     },
     async (params) => {
       try {
+        const schema = await resolveSchemaName(params.schema, params.database);
+        if (!schema) {
+          return {
+            content: [{ type: 'text', text: `Error: Schema '${params.schema}' does not exist.` }],
+            isError: true,
+          };
+        }
+
         const result = await query(
           'SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name',
-          [params.schema],
+          [schema],
           params.database
         );
         const tables = result.rows.map((r) => r.table_name as string);
@@ -64,7 +75,7 @@ Error Handling:
           ],
           structuredContent: {
             tables,
-            schema: params.schema,
+            schema,
             database: params.database || process.env.DB_NAME,
           },
         };
