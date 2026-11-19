@@ -19,6 +19,9 @@ Example:
 Error Handling:
   - Returns an error message if the connection fails`,
       inputSchema: {},
+      outputSchema: {
+        databases: z.array(z.string()),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

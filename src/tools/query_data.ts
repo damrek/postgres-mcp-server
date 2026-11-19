@@ -1,16 +1,17 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { query } from '../db.js';
+import { queryLimited } from '../db.js';
 import { CHARACTER_LIMIT } from '../constants.js';
+import { checkReadOnlySql } from '../sql-guard.js';
 
 export function registerQueryData(server: McpServer): void {
   server.registerTool(
     'postgres_query_data',
     {
       title: 'Query PostgreSQL Data',
-      description: `Execute a read-only SELECT query against a PostgreSQL database.
+      description: `Execute a single read-only query against a PostgreSQL database.
 
-IMPORTANT: Only SELECT queries are allowed. Any INSERT, UPDATE, DELETE, DROP, ALTER, or CREATE statements will be rejected.
+IMPORTANT: Only read-only statements are allowed (SELECT, WITH, TABLE, VALUES, SHOW, EXPLAIN). INSERT, UPDATE, DELETE, DDL, multiple statements, SELECT INTO, and EXPLAIN ANALYZE of writes are rejected.
 
 Args:
   - sql (string): The SELECT query to execute. Use $1, $2, etc. for parameters.
@@ -26,7 +27,7 @@ Example:
   - "SELECT name, email FROM customers LIMIT 10"
 
 Error Handling:
-  - Rejects non-SELECT queries
+  - Rejects non-read-only queries and statement stacking
   - Returns error for syntax errors or invalid tables`,
       inputSchema: {
         sql: z
@@ -49,6 +50,12 @@ Error Handling:
           .default(100)
           .describe('Maximum rows to return (default: 100, max: 1000)'),
       },
+      outputSchema: {
+        rows: z.array(z.record(z.string(), z.unknown())),
+        count: z.number(),
+        fields: z.array(z.string()),
+        truncated: z.boolean(),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -57,56 +64,49 @@ Error Handling:
       },
     },
     async (params) => {
-      const trimmedSql = params.sql.trim().toUpperCase();
-      const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'TRUNCATE', 'EXECUTE'];
-      for (const keyword of forbidden) {
-        if (trimmedSql.startsWith(keyword + ' ') || trimmedSql.startsWith(keyword + '\n')) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: Only SELECT queries are allowed. Detected '${keyword}' statement.`,
-              },
-            ],
-            isError: true,
-          };
-        }
+      const validation = checkReadOnlySql(params.sql);
+      if (!validation.valid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${validation.reason}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       try {
-        const limitedSql = params.sql.trim().replace(/;$/, '');
-        const hasLimit = /\bLIMIT\s+\d+/i.test(limitedSql);
-        const finalSql = hasLimit ? limitedSql : `${limitedSql} LIMIT ${params.limit}`;
-
-        const result = await query(finalSql, params.params, params.database);
-
-        if (result.rows.length === 0) {
-          return {
-            content: [{ type: 'text', text: 'Query returned 0 rows.' }],
-            structuredContent: { rows: [], count: 0, fields: result.fields.map((f) => f.name) },
-          };
-        }
-
+        const result = await queryLimited(params.sql, params.params, params.limit, params.database);
         const fields = result.fields.map((f) => f.name);
         const rows = result.rows;
 
-        let textOutput: string;
-        let output = { rows, count: rows.length, fields };
-
-        const jsonStr = JSON.stringify(output, null, 2);
-        if (jsonStr.length > CHARACTER_LIMIT) {
-          const halfRows = rows.slice(0, Math.max(1, Math.floor(rows.length / 2)));
-          output = { rows: halfRows, count: rows.length, fields };
-          textOutput = `Query returned ${rows.length} rows. Showing first ${halfRows.length} (response too large).\n\n`;
-          textOutput += formatRowsAsTable(fields, halfRows);
-        } else {
-          textOutput = `Query returned ${rows.length} row(s):\n\n`;
-          textOutput += formatRowsAsTable(fields, rows);
+        if (rows.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'Query returned 0 rows.' }],
+            structuredContent: { rows: [], count: 0, fields, truncated: false },
+          };
         }
+
+        const jsonStr = JSON.stringify({ rows, count: rows.length, fields }, null, 2);
+        const sizeLimited = jsonStr.length > CHARACTER_LIMIT;
+        const outputRows = sizeLimited ? rows.slice(0, Math.max(1, Math.floor(rows.length / 2))) : rows;
+        const truncated = result.truncated || sizeLimited;
+
+        let textOutput = result.truncated
+          ? `Query returned more than the ${params.limit} row limit. Showing the first ${rows.length}.\n\n`
+          : `Query returned ${rows.length} row(s):\n\n`;
+
+        if (sizeLimited) {
+          textOutput = `Query returned ${rows.length} row(s). Showing the first ${outputRows.length} (response too large).\n\n`;
+        }
+
+        textOutput += formatRowsAsTable(fields, outputRows);
 
         return {
           content: [{ type: 'text', text: textOutput }],
-          structuredContent: output,
+          structuredContent: { rows: outputRows, count: rows.length, fields, truncated },
         };
       } catch (error) {
         return {

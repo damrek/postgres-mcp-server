@@ -1,18 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
-
-interface Constraint {
-  type: 'PRIMARY KEY' | 'UNIQUE' | 'CHECK' | 'FOREIGN KEY';
-  name: string;
-  columns?: string[];
-  check_clause?: string;
-}
-
-interface Index {
-  name: string;
-  definition: string;
-}
+import {
+  columnsQuery,
+  constraintsQuery,
+  indexesQuery,
+  mapConstraints,
+  mapIndexes,
+  PUBLIC_SCHEMA,
+  resolveSchemaName,
+} from '../catalog.js';
 
 export function registerDescribeTable(server: McpServer): void {
   server.registerTool(
@@ -23,26 +20,62 @@ export function registerDescribeTable(server: McpServer): void {
 
 Args:
   - table_name (string): Name of the table to describe.
+  - schema (string, optional): Schema that contains the table (default: public). Unquoted names fold to lowercase; double-quote mixed-case names.
   - database (string, optional): Database name. If omitted, uses DB_NAME env var.
 
 Returns:
   - Column details: name, data type, nullable, default value.
-  - Constraints: primary keys, unique, check, and foreign key constraints.
+  - Constraints: primary keys, unique, check, and foreign key constraints with their definitions.
   - Indexes: all indexes defined on the table.
 
 Example:
   - Use when: "What columns does the users table have?"
   - Use when: "Show me the structure of the orders table"
   - Use when: "What indexes are on the users table?"
+  - Use when: "Describe analytics.events" -> table_name="events", schema="analytics"
 
 Error Handling:
-  - Returns an error if the table doesn't exist`,
+  - Returns text noting the table may not exist when no columns are found`,
       inputSchema: {
         table_name: z.string().describe('Name of the table to describe'),
+        schema: z
+          .string()
+          .min(1)
+          .default(PUBLIC_SCHEMA)
+          .describe(
+            'Schema that contains the table (default: public; unquoted names fold to lowercase, double-quote mixed-case names)'
+          ),
         database: z
           .string()
           .optional()
           .describe('Database name (optional, uses DB_NAME env if omitted)'),
+      },
+      outputSchema: {
+        table: z.string(),
+        schema: z.string(),
+        columns: z.array(
+          z.object({
+            name: z.string(),
+            type: z.string(),
+            nullable: z.boolean(),
+            default: z.string().nullable(),
+          })
+        ),
+        constraints: z.array(
+          z.object({
+            type: z.string(),
+            name: z.string(),
+            columns: z.array(z.string()).optional(),
+            check_clause: z.string().optional(),
+            definition: z.string().optional(),
+          })
+        ),
+        indexes: z.array(
+          z.object({
+            name: z.string(),
+            definition: z.string(),
+          })
+        ),
       },
       annotations: {
         readOnlyHint: true,
@@ -53,35 +86,22 @@ Error Handling:
     },
     async (params) => {
       try {
+        const schema = await resolveSchemaName(params.schema, params.database);
+        if (!schema) {
+          return {
+            content: [{ type: 'text', text: `Error: Schema '${params.schema}' does not exist.` }],
+            isError: true,
+          };
+        }
+
+        const columnLookup = columnsQuery(params.table_name, schema);
+        const constraintLookup = constraintsQuery(params.table_name, schema);
+        const indexLookup = indexesQuery(params.table_name, schema);
+
         const [columnsResult, constraintsResult, indexesResult] = await Promise.all([
-          query(
-            `SELECT column_name, data_type, is_nullable, column_default
-             FROM information_schema.columns
-             WHERE table_name = $1 AND table_schema = 'public'
-             ORDER BY ordinal_position`,
-            [params.table_name],
-            params.database
-          ),
-          query(
-            `SELECT tc.constraint_type, tc.constraint_name, kcu.column_name, cc.check_clause
-             FROM information_schema.table_constraints tc
-             LEFT JOIN information_schema.key_column_usage kcu
-               ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-             LEFT JOIN information_schema.check_constraints cc
-               ON tc.constraint_name = cc.constraint_name AND tc.constraint_schema = cc.constraint_schema
-             WHERE tc.table_name = $1 AND tc.table_schema = 'public'
-               AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'CHECK')
-             ORDER BY tc.constraint_type, tc.constraint_name, kcu.ordinal_position`,
-            [params.table_name],
-            params.database
-          ),
-          query(
-            `SELECT indexname, indexdef
-             FROM pg_indexes
-             WHERE tablename = $1 AND schemaname = 'public'`,
-            [params.table_name],
-            params.database
-          ),
+          query(columnLookup.sql, columnLookup.params, params.database),
+          query(constraintLookup.sql, constraintLookup.params, params.database),
+          query(indexLookup.sql, indexLookup.params, params.database),
         ]);
 
         if (columnsResult.rows.length === 0) {
@@ -89,9 +109,16 @@ Error Handling:
             content: [
               {
                 type: 'text',
-                text: `No columns found for table '${params.table_name}'. Table may not exist or is not in the public schema.`,
+                text: `No columns found for table '${schema}.${params.table_name}'. Table may not exist.`,
               },
             ],
+            structuredContent: {
+              table: params.table_name,
+              schema,
+              columns: [],
+              constraints: [],
+              indexes: [],
+            },
           };
         }
 
@@ -102,29 +129,8 @@ Error Handling:
           default: r.column_default as string | null,
         }));
 
-        const constraintMap = new Map<string, Constraint>();
-        for (const r of constraintsResult.rows) {
-          const name = r.constraint_name as string;
-          const type = r.constraint_type as Constraint['type'];
-          if (!constraintMap.has(name)) {
-            constraintMap.set(name, {
-              type,
-              name,
-              columns: [],
-              check_clause: r.check_clause as string | undefined,
-            });
-          }
-          const constraint = constraintMap.get(name)!;
-          if (r.column_name) {
-            constraint.columns!.push(r.column_name as string);
-          }
-        }
-        const constraints = Array.from(constraintMap.values());
-
-        const indexes: Index[] = indexesResult.rows.map((r) => ({
-          name: r.indexname as string,
-          definition: r.indexdef as string,
-        }));
+        const constraints = mapConstraints(constraintsResult.rows);
+        const indexes = mapIndexes(indexesResult.rows);
 
         const lines = [`## Table: ${params.table_name}\n`];
 
@@ -136,25 +142,32 @@ Error Handling:
 
         if (constraints.length > 0) {
           lines.push('\n### Constraints\n');
-          for (const c of constraints) {
-            if (c.type === 'CHECK') {
-              lines.push(`- **${c.type}** ${c.name}: ${c.check_clause}`);
+          for (const constraint of constraints) {
+            const columns = constraint.columns?.join(', ');
+            if (constraint.type === 'CHECK' || constraint.type === 'FOREIGN KEY') {
+              lines.push(`- **${constraint.type}** ${constraint.name}: ${constraint.definition ?? ''}`);
             } else {
-              lines.push(`- **${c.type}** ${c.name}: (${c.columns?.join(', ')})`);
+              lines.push(`- **${constraint.type}** ${constraint.name}: (${columns})`);
             }
           }
         }
 
         if (indexes.length > 0) {
           lines.push('\n### Indexes\n');
-          for (const idx of indexes) {
-            lines.push(`- **${idx.name}**: ${idx.definition}`);
+          for (const index of indexes) {
+            lines.push(`- **${index.name}**: ${index.definition}`);
           }
         }
 
         return {
           content: [{ type: 'text', text: lines.join('\n') }],
-          structuredContent: { table: params.table_name, columns, constraints, indexes },
+          structuredContent: {
+            table: params.table_name,
+            schema,
+            columns,
+            constraints,
+            indexes,
+          },
         };
       } catch (error) {
         return {

@@ -1,14 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { query } from '../db.js';
-
-interface Relationship {
-  constraint_name: string;
-  source_table: string;
-  source_column: string;
-  target_table: string;
-  target_column: string;
-}
+import { mapRelationships, relationshipsQuery } from '../catalog.js';
 
 export function registerListRelationships(server: McpServer): void {
   server.registerTool(
@@ -19,13 +12,14 @@ export function registerListRelationships(server: McpServer): void {
 
 Use this tool to understand how tables are related before writing JOIN queries.
 Returns all foreign key constraints showing which columns in which tables reference other tables.
+Composite foreign keys are returned one row per column pair.
 
 Args:
-  - table_name (string, optional): Filter relationships for a specific table.
+  - table_name (string, optional): Filter relationships for a specific table. Use table or schema.table.
   - database (string, optional): Database name. If omitted, uses DB_NAME env var.
 
 Returns:
-  A list of foreign key relationships with source/target tables and columns.
+  A list of foreign key relationships with source/target schemas, tables, and columns.
 
 Example:
   - "What tables are related to the users table?" → table_name="users"
@@ -41,6 +35,21 @@ Example:
           .optional()
           .describe('Database name (optional, uses DB_NAME env if omitted)'),
       },
+      outputSchema: {
+        relationships: z.array(
+          z.object({
+            constraint_name: z.string(),
+            source_schema: z.string(),
+            source_table: z.string(),
+            source_column: z.string(),
+            target_schema: z.string(),
+            target_table: z.string(),
+            target_column: z.string(),
+          })
+        ),
+        count: z.number(),
+        database: z.string().optional(),
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -48,44 +57,10 @@ Example:
         openWorldHint: false,
       },
     },
-     async (params) => {
-       try {
-         let sql = `
-           SELECT
-             tc.constraint_name,
-             tc.table_name AS source_table,
-             tc.table_schema AS source_schema,
-             kcu.column_name AS source_column,
-             ccu.table_name AS target_table,
-             ccu.column_name AS target_column
-           FROM information_schema.table_constraints tc
-           LEFT JOIN information_schema.key_column_usage kcu
-             ON tc.constraint_name = kcu.constraint_name
-           LEFT JOIN information_schema.constraint_column_usage ccu
-             ON tc.constraint_name = ccu.constraint_name
-           WHERE tc.constraint_type = 'FOREIGN KEY'
-             AND tc.table_schema = 'public'
-         `;
-
-         const queryParams: unknown[] = [];
-
-         if (params.table_name) {
-           if (params.table_name.includes('.')) {
-             const [schema, table] = params.table_name.split('.');
-             queryParams.push(table);
-             queryParams.push(schema);
-             const tableIdx = queryParams.length - 1;
-             const schemaIdx = queryParams.length;
-             sql += ` AND tc.table_name = $${tableIdx} AND tc.table_schema = $${schemaIdx}`;
-           } else {
-             queryParams.push(params.table_name);
-             sql += ` AND (tc.table_name = $${queryParams.length} OR ccu.table_name = $${queryParams.length})`;
-           }
-         }
-
-        sql += ` ORDER BY tc.table_name, tc.constraint_name`;
-
-        const result = await query(sql, queryParams, params.database);
+    async (params) => {
+      try {
+        const lookup = relationshipsQuery({ tableName: params.table_name });
+        const result = await query(lookup.sql, lookup.params, params.database);
 
         if (result.rows.length === 0) {
           const message = params.table_name
@@ -97,19 +72,13 @@ Example:
           };
         }
 
-        const relationships: Relationship[] = result.rows.map((r) => ({
-          constraint_name: r.constraint_name as string,
-          source_table: r.source_table as string,
-          source_column: r.source_column as string,
-          target_table: r.target_table as string,
-          target_column: r.target_column as string,
-        }));
+        const relationships = mapRelationships(result.rows);
 
         const lines: string[] = [];
         lines.push(`Found ${relationships.length} relationship(s):\n`);
         for (const rel of relationships) {
           lines.push(
-            `- **${rel.source_table}.${rel.source_column}** → **${rel.target_table}.${rel.target_column}** (${rel.constraint_name})`
+            `- **${rel.source_schema}.${rel.source_table}.${rel.source_column}** → **${rel.target_schema}.${rel.target_table}.${rel.target_column}** (${rel.constraint_name})`
           );
         }
 
@@ -117,7 +86,7 @@ Example:
         lines.push(`To JOIN these tables, use:`);
         for (const rel of relationships) {
           lines.push(
-            `  JOIN ${rel.target_table} ON ${rel.source_table}.${rel.source_column} = ${rel.target_table}.${rel.target_column}`
+            `  JOIN ${rel.target_schema}.${rel.target_table} ON ${rel.source_schema}.${rel.source_table}.${rel.source_column} = ${rel.target_schema}.${rel.target_table}.${rel.target_column}`
           );
         }
 
